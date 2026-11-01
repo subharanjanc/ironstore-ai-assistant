@@ -1,6 +1,13 @@
 # IronStore Enterprise AI Assistant
 
-**Live app: _(Vercel URL — added after the first deploy)_**
+**Live app: https://ironstore-ai-assistant-one.vercel.app/**
+No sign-in needed.
+
+| | |
+|---|---|
+| Live | https://ironstore-ai-assistant-one.vercel.app/ |
+| API docs | https://ironstore-ai-assistant-one.vercel.app/docs |
+| Health | https://ironstore-ai-assistant-one.vercel.app/health |
 
 Mini-project, Ironhack AI Engineering FT Sept 26.
 Brief: `ironhack-rmt-AI-student-materials/project-brief-enterprise-ai-assistant`
@@ -107,4 +114,4 @@ project's environment variables **before** the first deploy — without them `/h
 | Bonus: sources with document, part and link | done (title, page, PDF link) |
 | Bonus: API | done (FastAPI, tested) |
 | Bonus: frontend | done |
-| Bonus: deploy | Vercel |
+| Bonus: deploy | done — https://ironstore-ai-assistant-one.vercel.app/ |
