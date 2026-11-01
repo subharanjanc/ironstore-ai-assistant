@@ -122,6 +122,11 @@ function add(cls, html) {
 
 async function ask(question) {
   add("user", escapeHtml(question));
+  if (location.protocol === "file:") {             // opened as a file: there is no server behind /ask
+    add("bot", '<div class="warn">This page was opened as a file. Start the app (<code>python run_local.py</code>) '
+             + 'and open <a href="http://localhost:8000">http://localhost:8000</a> instead.</div>');
+    return;
+  }
   const pending = add("bot", '<span class="typing">Searching the documents…</span>');
   send.disabled = true;
   try {
