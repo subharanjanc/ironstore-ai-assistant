@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IronStore Assistant</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #e3e6eb;
+    --accent: #2c5cc5; --accent-soft: #e8eefb; --user: #2c5cc5; --user-text: #ffffff;
+    --warn-bg: #fff4e5; --warn: #9a5b00; --chip: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --border: #2b313c;
+      --accent: #7aa2ff; --accent-soft: #1f2b45; --user: #3a63c9; --user-text: #ffffff;
+      --warn-bg: #3a2a12; --warn: #ffc069; --chip: #252b36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .app { max-width: 860px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
+  header { padding: 20px 0 12px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  #chat { flex: 1; padding: 16px 0; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 92%; padding: 12px 14px; border-radius: 12px; }
+  .user { align-self: flex-end; background: var(--user); color: var(--user-text); border-bottom-right-radius: 4px; }
+  .bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .bot p { margin: 0 0 8px; } .bot p:last-child { margin-bottom: 0; }
+  .bot ul { margin: 4px 0 8px; padding-left: 20px; }
+  .cite { color: var(--accent); font-weight: 600; font-size: 12px; }
+  .warn { background: var(--warn-bg); color: var(--warn); padding: 6px 10px; border-radius: 8px; margin-bottom: 8px; }
+  .sources { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .sources a { background: var(--chip); color: var(--text); text-decoration: none; font-size: 12.5px;
+               padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); }
+  .sources a:hover { border-color: var(--accent); }
+  .sources a.old { background: var(--warn-bg); color: var(--warn); }
+  .meta { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+  .examples button { background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 999px;
+                     padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .intro { color: var(--muted); font-size: 14px; }
+  form { position: sticky; bottom: 0; background: var(--bg); padding: 12px 0 18px; display: flex; gap: 8px;
+         border-top: 1px solid var(--border); }
+  textarea { flex: 1; resize: none; min-height: 46px; max-height: 140px; padding: 11px 12px; border-radius: 10px;
+             border: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button.send { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 0 18px;
+                font: inherit; font-weight: 600; cursor: pointer; }
+  button.send:disabled { opacity: .5; cursor: default; }
+  .new { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 10px;
+         padding: 0 12px; font: inherit; cursor: pointer; }
+  .typing { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>IronStore Assistant</h1>
+    <p>Answers from internal policies and product catalogs, with sources. Hybrid search · router · reranker.</p>
+  </header>
+
+  <main id="chat">
+    <div class="intro">Ask about HR, IT, finance, legal, sales, customer support, deliveries or any product. Try:</div>
+    <div class="examples">
+      <button>How many days per week do I need to be in the office?</button>
+      <button>How do I request time off?</button>
+      <button>Which drones do we sell under 300 euros?</button>
+      <button>What is SKU PRJ-PCB-PB1080?</button>
+      <button>Can I expense a monitor for my home office?</button>
+      <button>Wie viele Tage Homeoffice sind erlaubt?</button>
+    </div>
+  </main>
+
+  <form id="form">
+    <button type="button" class="new" id="new" title="Start a new chat">New</button>
+    <textarea id="q" placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)" rows="1"></textarea>
+    <button class="send" id="send">Ask</button>
+  </form>
+</div>
+
+<script>
+const chat = document.getElementById("chat");
+const form = document.getElementById("form");
+const box = document.getElementById("q");
+const send = document.getElementById("send");
+let history = [];
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+
+// Small Markdown subset: **bold**, bullet lists, paragraphs, [S1] citations.
+function render(markdown) {
+  const lines = escapeHtml(markdown).split("\n");
+  let html = "", inList = false;
+  for (const raw of lines) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+                    .replace(/\[S(\d+)\]/g, '<span class="cite">[S$1]</span>');
+    const bullet = line.match(/^\s*(?:[-*•]|\d+\.)\s+(.*)/);
+    if (bullet) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${bullet[1]}</li>`;
+      continue;
+    }
+    if (inList) { html += "</ul>"; inList = false; }
+    if (line.trim()) html += line.startsWith("⚠️") ? `<div class="warn">${line}</div>` : `<p>${line}</p>`;
+  }
+  return html + (inList ? "</ul>" : "");
+}
+
+function add(cls, html) {
+  const div = document.createElement("div");
+  div.className = `msg ${cls}`;
+  div.innerHTML = html;
+  chat.appendChild(div);
+  div.scrollIntoView({behavior: "smooth", block: "end"});
+  return div;
+}
+
+async function ask(question) {
+  add("user", escapeHtml(question));
+  const pending = add("bot", '<span class="typing">Searching the documents…</span>');
+  send.disabled = true;
+  try {
+    const response = await fetch("/ask", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({question, history}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.statusText);
+    const sources = data.sources.map(s =>
+      `<a href="${s.url}" target="_blank" rel="noopener" class="${s.outdated ? "old" : ""}"
+          title="${escapeHtml(s.file)}">S${s.n} · ${escapeHtml(s.title)} · p.${s.page}${s.outdated ? " · outdated" : ""}</a>`).join("");
+    const route = data.route ? Object.entries(data.route).map(([k, v]) => `${k}=${v}`).join(", ") : "";
+    pending.innerHTML = render(data.answer)
+      + (sources ? `<div class="sources">${sources}</div>` : "")
+      + `<div class="meta">${escapeHtml(data.path || "")} · ${escapeHtml(route)} · `
+      + `${(data.timings.retrieval_s + data.timings.answer_s).toFixed(1)} s</div>`;
+    history.push({question, answer: data.answer});
+    history = history.slice(-4);
+  } catch (error) {
+    pending.innerHTML = `<div class="warn">Sorry, something went wrong: ${escapeHtml(error.message)}</div>`;
+  } finally {
+    send.disabled = false;
+    box.focus();
+  }
+}
+
+form.addEventListener("submit", event => {
+  event.preventDefault();
+  const question = box.value.trim();
+  if (question.length < 2 || send.disabled) return;
+  box.value = "";
+  ask(question);
+});
+box.addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); }
+});
+document.querySelectorAll(".examples button").forEach(b => b.addEventListener("click", () => ask(b.textContent)));
+document.getElementById("new").addEventListener("click", () => {
+  history = [];
+  chat.querySelectorAll(".msg").forEach(m => m.remove());
+  box.focus();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+-r requirements.txt
+uvicorn
+httpx
+pymupdf
+langchain-text-splitters
+tiktoken
+python-dotenv

@@ -1,0 +1,9 @@
+{
+  "builds": [
+    { "src": "api/index.py", "use": "@vercel/python",
+      "config": { "maxDuration": 60, "includeFiles": ["api/static/**", "documents/**"] } }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "api/index.py" }
+  ]
+}
