@@ -25,6 +25,7 @@ from the outdated 2021 catalog, and says so when the answer isn't in the documen
 question ──► follow-up? → rewrite as a standalone question (chat history)
          ──► router (policy / product / both, SKU, max price)  ∥  3 rewritten questions
          ──► SKU in the question? → exact metadata lookup
+             "list all …" product question? → complete product list (metadata filter + name/category match)
              otherwise hybrid search (dense + sparse) for all 4 versions, with metadata filters
          ──► dedup (by id and by text) ──► rerank (bge-reranker-v2-m3) ──► top 6
          ──► weak product match? → also search the 2021 catalog (flagged outdated)
@@ -40,6 +41,7 @@ question ──► follow-up? → rewrite as a standalone question (chat history
 | **Router** (gpt-4o-mini, structured output) → Pinecone filters | policy questions never see 3,000 product chunks; "under 300 €" becomes `price ≤ 300` |
 | **Multi-query** (3 English rewrites) + **dedup** | different wording finds more; a German question still matches English documents |
 | **Reranker** for ordering only | its scores are relative, so they are never used to refuse an answer |
+| **Complete lists** for "which / list all …" questions | the top 6 of a search is not a list: "drones under 300 €" now returns every matching product, sorted by price |
 | gpt-4o-mini for small jobs, gpt-4.1-mini for the answer | a small *model routing*: cheap where it's easy, careful where it matters |
 
 The design was developed step by step in three notebooks (all included):
@@ -82,21 +84,52 @@ The design was developed step by step in three notebooks (all included):
 - **Inconsistent IDs:** two different policies share the ID `CS-POL-014` — answers cite file names, not IDs.
 - **Mixed layouts:** the 63 catalogs use four different product layouts; the splitter anchors on each product's `Category:` line.
 
-## Run locally
+## Run locally (in a virtual environment)
 
 ```bash
+python -m venv .venv                  # or: python -m virtualenv .venv
+.venv\Scripts\activate                # macOS/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env          # add OPENAI_API_KEY and PINECONE_API_KEY
-python scripts/build_index.py # once: builds the Pinecone index (~1 min, ~2 cents)
-python run_local.py           # http://localhost:8000
+cp .env.example .env                  # add OPENAI_API_KEY and PINECONE_API_KEY
+python scripts/build_index.py         # once: builds the Pinecone index (~1 min, ~2 cents)
+python run_local.py                   # http://localhost:8000
 ```
+
+The venv contains only what `requirements-dev.txt` lists, so a passing test run proves the
+requirements are complete (the same ones Vercel installs from `requirements.txt`).
 
 ## Tests
 
 ```bash
 python test_api.py          # 7 checks, no API calls, free
-python test_api.py --live   # adds 5 real questions: SKU, policy, follow-up, outdated warning
+python test_api.py --live   # adds 6 real questions: SKU, policy, follow-up, outdated warning, product list
 ```
+
+## Evaluation
+
+`eval/` measures answer **quality**, not only "does it run":
+
+| File | What it is |
+|---|---|
+| `eval/dataset.json` | 18 questions with reference answers from the PDFs: policy, product, SKU, list, outdated, both, conflicting documents, German, follow-up, unanswerable |
+| `eval/run_eval.py` | runs every question through the real app code (`api/rag.py`), then 4 LLM judges grade each answer |
+| `eval/results/` | one Markdown report per run (pass rates, failures with the judge's reason, all answers) |
+
+| Judge | Compares | Catches |
+|---|---|---|
+| correctness | answer ↔ reference answer | wrong or missing facts |
+| relevance | answer ↔ question | off-topic answers |
+| groundedness | answer ↔ retrieved chunks | hallucination |
+| retrieval relevance | chunks ↔ question | search failures (n/a for unanswerable questions) |
+
+```bash
+python eval/run_eval.py              # LangSmith experiment if LANGSMITH_API_KEY is set, plus a local report
+python eval/run_eval.py --local      # no LangSmith
+python eval/run_eval.py --only list sku
+```
+
+With LangSmith, each run is an experiment on dataset `ironstore-app-eval`, named after the git
+commit, so versions can be compared side by side (Datasets & Experiments → Compare).
 
 ## Deploy
 
@@ -115,3 +148,4 @@ project's environment variables **before** the first deploy — without them `/h
 | Bonus: API | done (FastAPI, tested) |
 | Bonus: frontend | done |
 | Bonus: deploy | done — https://ironstore-ai-assistant-one.vercel.app/ |
+| Evaluation system | done — `eval/` (18 questions, 4 LLM judges, LangSmith experiments, reports) |

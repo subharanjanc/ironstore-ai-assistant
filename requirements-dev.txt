@@ -5,3 +5,4 @@ pymupdf
 langchain-text-splitters
 tiktoken
 python-dotenv
+langsmith

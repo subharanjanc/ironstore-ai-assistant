@@ -67,4 +67,10 @@ if "--live" in sys.argv:
     r = client.post("/ask", json={"question": "What is the price of the IronStore 24 inch Full HD office monitor?"})
     check("2021-only product gets the outdated warning", r.json()["answer"].startswith("⚠️"))
 
+    r = client.post("/ask", json={"question": "Which drones do we sell under 300 euros?"})
+    data = r.json()
+    check("list question -> complete product list under the price limit",
+          data["path"] == "product list" and "79.90" in data["answer"] and "189" in data["answer"]
+          and "329" not in data["answer"])
+
 print(f"\n{passed} checks passed")

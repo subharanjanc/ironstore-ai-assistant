@@ -28,6 +28,8 @@ TOP_K = 8                    # hits per question version
 TOP_N = 6                    # chunks the answer model gets after reranking
 FALLBACK_RERANK = 0.5        # product match weaker than this → also try the 2021 catalog
 MAX_HISTORY_TURNS = 4
+LIST_CANDIDATES = 500        # products scanned for a "list all …" question
+MAX_LIST = 40                # products the answer model gets for a list
 
 CODE_PATTERN = re.compile(r"\b[A-Z0-9]{2,}(?:-[A-Z0-9]+)+\b")
 
@@ -56,6 +58,11 @@ class Route(BaseModel):
                                                  "joined by dashes like PRJ-PCB-PB1080; never a product name; else null")
     max_price: Optional[float] = Field(None, description="upper price limit in EUR if the question gives one, else null")
     wants_old_catalog: bool = Field(False, description="true only if the user asks about old, 2021 or past catalog data")
+    list_all: bool = Field(False, description="true if the user wants a list of ALL products matching a condition, "
+                                             "e.g. 'which drones do we sell under 300 euros?', 'list our projectors'")
+    product_words: list[str] = Field(default_factory=list,
+                                     description="for list questions: the product type in English, singular, lower case, "
+                                                 "as it would appear in a product name or category, e.g. ['drone']")
 
 
 class Rewrites(BaseModel):
@@ -94,6 +101,8 @@ def standalone_question(question, history):
 def route_question(question):
     route = _parse(SMALL_MODEL, Route, f"Route this IronStore employee question.\n\nQuestion: {question}")
     if route.sku and not CODE_PATTERN.fullmatch(route.sku.strip().upper()):   # names are not SKUs
+        route.sku = None
+    if route.sku and route.sku.strip().upper() not in question.upper():      # invented codes are not SKUs
         route.sku = None
     return route
 
@@ -169,6 +178,33 @@ def rerank(question, candidates, top_n=TOP_N):
     return [{**candidates[r.index], "rerank": round(r.score, 3)} for r in result.data]
 
 
+def list_products(route, dense_vec):
+    """'Which drones under 300 €?' → every matching product, not just the 6 best search hits.
+
+    Pinecone filters on catalog / not outdated / price; the product type is then matched in each
+    product's name and category metadata. One query, no reranking: a list must be complete, not ranked.
+    """
+    _, _, index = clients()
+    words = [w.lower().strip() for w in route.product_words if w.strip()]
+    if not words:
+        return []
+    flt = {"kind": {"$eq": "product"}, "outdated": {"$eq": route.wants_old_catalog}}
+    if route.max_price:
+        flt["price"] = {"$lte": route.max_price}
+    matches = index.query(vector=dense_vec, top_k=LIST_CANDIDATES, include_metadata=True, filter=flt).matches
+    found = {}
+    for m in matches:                    # a long product can be split in two chunks: keep it once
+        p = m.metadata
+        if any(w in f"{p.get('name', '')} {p.get('category', '')}".lower() for w in words):
+            found.setdefault(p.get("sku") or p.get("name"), p)
+    found = sorted(found.values(), key=lambda p: p.get("price", 0))
+    return [{**p, "id": p.get("sku") or p["name"], "score": 1.0, "rerank": 1.0,
+             # one compact line per product keeps a 40-product list small for the answer model
+             "text": f"[{p['title']} | page {int(p['page'])}] {p['name']} | SKU {p.get('sku', '?')} | "
+                     f"€{p.get('price', 0):.2f} | {p.get('availability', '?')} | {p.get('category', '')}"}
+            for p in found[:MAX_LIST]]
+
+
 def retrieve(question):
     log = {}
     with ThreadPoolExecutor(max_workers=2) as pool:                      # router ∥ rewrites
@@ -186,6 +222,13 @@ def retrieve(question):
         if hits:
             log["path"] = "SKU lookup"
             return [{"id": h.id, "score": 1.0, "rerank": 1.0, **h.metadata} for h in hits], log
+
+    if route.target == "product" and route.list_all:                      # complete product list
+        products = list_products(route, dense_vecs[0])
+        if products:
+            log["path"] = "product list"
+            log.update(found=len(products), after_dedup=len(products), after_rerank=len(products))
+            return products, log
 
     sparse_vecs = sparse_embed(queries)
     alpha = choose_alpha(question)
@@ -215,6 +258,8 @@ SYSTEM_PROMPT = (
     "and suggest which department could help. Never invent numbers, names or rules.\n"
     "If sources disagree, prefer the most recently reviewed one and mention the difference.\n"
     "Sources marked OUTDATED come from the 2021 catalog: say clearly that this information is outdated.\n"
+    "If the sources are a product list, list every product that is the kind asked for, with price and availability; "
+    "leave out accessories or spare parts unless they were asked for.\n"
     "Be concise; use bullet points for procedures and lists. Answer in the language of the question.\n\n"
     "Sources:\n{context}")
 
